@@ -220,10 +220,32 @@ class MIDIGenerator(ABC):
     def run(self):
         """
         Main event loop - runs indefinitely until interrupted
+        Uses absolute time scheduling to prevent drift
         """
         try:
+            start_time = time.time()
+            step_number = 0
+            step_duration = self.get_step_duration()
+
             while True:
+                # Calculate when this step should occur (absolute time)
+                scheduled_time = start_time + (step_number * step_duration)
+
+                # Wait until the scheduled time
+                now = time.time()
+                sleep_duration = scheduled_time - now
+                if sleep_duration > 0:
+                    time.sleep(sleep_duration)
+                elif sleep_duration < -step_duration:
+                    # We're more than one step behind - warn and resync
+                    print(f"Warning: Timing fell behind by {-sleep_duration:.3f}s, resyncing...")
+                    start_time = time.time()
+                    step_number = 0
+                    continue
+
+                # Generate and play notes for this step
                 self.generate_step()
-                time.sleep(self.get_step_duration())
+                step_number += 1
+
         except KeyboardInterrupt:
             self.cleanup()
