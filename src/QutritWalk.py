@@ -369,7 +369,8 @@ class QutritWalkMusic(MIDIGenerator):
             # Sample from neighbors only
             chord_to_play = self.walker.measure_constrained(neighbors)
 
-            print(f"{str(chord_to_play):5s} | Neighbors: [{prob_str}]")
+            # Print: current chord | neighbor probabilities → chosen chord
+            print(f"{str(self.current_chord):5s} | [{prob_str}] → {str(chord_to_play):5s}")
 
             # Update current chord for next iteration
             self.current_chord = chord_to_play
