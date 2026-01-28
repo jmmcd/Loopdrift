@@ -1,6 +1,8 @@
 # Loopdrift specific
 src/unused/
 
+results/
+
 # macOS
 .DS_Store
 .AppleDouble

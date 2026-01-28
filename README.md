@@ -66,6 +66,13 @@ You might have to select a MIDI output. There are also command-line arguments fo
 
 This is a very early piece of work with the Galway Music, Maths, Computing, etc, group. The code is by Claude. This is in flux so not much documentation yet.
 
+`python QutritWalk.py # send MIDI to GB`
+
+
+## Experiments with QutritWalk:
+
+`python experiments_qutrit.py --steps 1000 --num-runs 100 --seed 42 --output ../results/QutritWalkResults/experiment.csv`
+
 
 
 # A Quantum Singularity 

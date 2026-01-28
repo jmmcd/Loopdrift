@@ -295,18 +295,83 @@ class QutritWalker:
         return probs
 
 
+class QutritWalkSimulator:
+    """Core qutrit walk logic without any I/O (no MIDI, no printing)"""
+
+    def __init__(self, initial_chord: Chord, initial_spin: int = 0):
+        """
+        Initialize the simulator
+
+        Args:
+            initial_chord: Starting chord
+            initial_spin: Initial spin state (0=|↑⟩, 1=|→⟩, 2=|↓⟩)
+        """
+        self.walker = QutritWalker()
+        self.current_chord = initial_chord
+        self.walker.set_initial_state(initial_chord, initial_spin)
+        self.is_first_step = True
+
+    def step_and_sample(self) -> dict:
+        """
+        Perform one step: evolve quantum state and sample next chord
+
+        Returns:
+            dict with keys:
+                - 'current': Current chord (before transition)
+                - 'neighbors': List of 3 neighbor chords [L, P, R]
+                - 'next': Next chord (sampled from neighbors)
+                - 'all_probs': Dict of all 24 chord probabilities {(root, is_major): prob}
+                - 'is_first': Boolean indicating if this is the first step
+        """
+        result = {
+            'current': self.current_chord,
+            'is_first': self.is_first_step
+        }
+
+        if self.is_first_step:
+            self.is_first_step = False
+            # For first step, just return current chord info
+            result['neighbors'] = []
+            result['next'] = self.current_chord
+            result['all_probs'] = self.walker.get_chord_probabilities()
+            return result
+
+        # Evolve the quantum state
+        self.walker.step()
+
+        # Get the 3 neighbors
+        neighbors = [
+            apply_L(self.current_chord),
+            apply_P(self.current_chord),
+            apply_R(self.current_chord)
+        ]
+
+        # Get full probability distribution
+        all_probs = self.walker.get_chord_probabilities()
+
+        # Sample next chord from neighbors
+        next_chord = self.walker.measure_constrained(neighbors)
+
+        result['neighbors'] = neighbors
+        result['next'] = next_chord
+        result['all_probs'] = all_probs
+
+        # Update current chord for next iteration
+        self.current_chord = next_chord
+
+        return result
+
+
 class QutritWalkMusic(MIDIGenerator):
     """Qutrit quantum walk music generator"""
 
     def __init__(self):
         super().__init__(description="Qutrit Walk - Quantum music generation on triadic tonnetz")
-        self.walker = QutritWalker()
         self.chord_duration = 1.0  # seconds
         self.chord_velocity = 70
         self.initial_chord = Chord(0, True, 0)  # C major
         self.initial_spin = 0  # |↑⟩
-        self.current_chord: Chord = self.initial_chord  # Track the last played chord
-        self.first_step = True
+        self.simulator: QutritWalkSimulator = None  # type: ignore - Will be initialized in setup()
 
     def setup_args(self, parser=None):
         """Add qutrit walk specific arguments"""
@@ -323,9 +388,7 @@ class QutritWalkMusic(MIDIGenerator):
 
     def setup(self):
         """Initialize qutrit walk state"""
-        self.walker.set_initial_state(self.initial_chord, self.initial_spin)
-        self.current_chord = self.initial_chord
-        self.first_step = True  # Flag for first chord
+        self.simulator = QutritWalkSimulator(self.initial_chord, self.initial_spin)
 
         print(f"Starting qutrit quantum walk on triadic tonnetz")
         print(f"Chord duration: {self.chord_duration}s")
@@ -338,42 +401,28 @@ class QutritWalkMusic(MIDIGenerator):
         import threading
         import time
 
-        # For the very first step, play the initial chord before stepping
-        if self.first_step:
-            self.first_step = False
-            chord_to_play = self.current_chord
-            print(f"{str(chord_to_play):5s} | Initial")
+        # Get next step from simulator
+        result = self.simulator.step_and_sample()
+
+        # Print output
+        if result['is_first']:
+            print(f"{str(result['current']):5s} | Initial")
+            chord_to_play = result['current']
         else:
-            # Evolve the quantum state (no collapse)
-            self.walker.step()
-
-            # Get the 3 neighbors of the current chord
-            neighbors = [
-                apply_L(self.current_chord),
-                apply_P(self.current_chord),
-                apply_R(self.current_chord)
-            ]
-
-            # Get probability distribution for neighbors only
-            chord_probs = self.walker.get_chord_probabilities()
+            # Format neighbor probabilities for display
             neighbor_probs = []
-            for chord in neighbors:
+            for chord in result['neighbors']:
                 key = (chord.root, chord.is_major)
-                prob = chord_probs.get(key, 0.0)
+                prob = result['all_probs'].get(key, 0.0)
                 neighbor_probs.append((chord, prob))
 
             # Sort by probability and format for display
             neighbor_probs.sort(key=lambda x: x[1], reverse=True)
             prob_str = ", ".join([f"{str(chord):5s}: {prob:.3f}" for chord, prob in neighbor_probs])
 
-            # Sample from neighbors only
-            chord_to_play = self.walker.measure_constrained(neighbors)
-
             # Print: current chord | neighbor probabilities → chosen chord
-            print(f"{str(self.current_chord):5s} | [{prob_str}] → {str(chord_to_play):5s}")
-
-            # Update current chord for next iteration
-            self.current_chord = chord_to_play
+            print(f"{str(result['current']):5s} | [{prob_str}] → {str(result['next']):5s}")
+            chord_to_play = result['next']
 
         # Get MIDI notes for the chord
         midi_notes = chord_to_play.to_midi_notes(self.base_octave)
@@ -394,8 +443,6 @@ class QutritWalkMusic(MIDIGenerator):
                     self.outport.send(msg_off)
 
         threading.Thread(target=send_note_offs, daemon=True).start()
-
-        # Note: The quantum state continues evolving without collapse!
 
     def get_step_duration(self):
         """Return chord duration (time between measurements)"""
