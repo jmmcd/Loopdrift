@@ -131,6 +131,105 @@ def apply_R(chord: Chord) -> Chord:
         return Chord(new_root, True, 0)
 
 
+def parse_initial_state(state_spec: str) -> List[Tuple[Chord, int, complex]]:
+    """
+    Parse initial state specification string into list of (chord, spin, amplitude) tuples
+
+    Supported formats:
+    - "C:up" → |C major, ↑⟩
+    - "Am:down" → |A minor, ↓⟩
+    - "C:up+down" → (|C,↑⟩ + |C,↓⟩)/√2 (equal superposition)
+    - "C:up+right+down" → (|C,↑⟩ + |C,→⟩ + |C,↓⟩)/√3 (all three spins)
+    - "C:0.5*up+0.5*down" → Custom real amplitudes
+    - "C:1*up+i*down" → Complex amplitudes with imaginary unit i
+    - "C+Am+F:up" → (|C,↑⟩ + |Am,↑⟩ + |F,↑⟩)/√3 (chord superposition)
+
+    Args:
+        state_spec: State specification string
+
+    Returns:
+        List of (chord, spin, amplitude) tuples (unnormalized)
+    """
+    spin_names = {'up': 0, 'right': 1, 'down': 2}
+    components = []
+
+    # Find the colon to split chord(s) and spin specification
+    if ':' not in state_spec:
+        raise ValueError(f"Invalid format: {state_spec}. Expected 'chord:spin_spec' or 'chord1+chord2:spin_spec'")
+
+    # Split at the LAST colon to handle multiple chords
+    last_colon = state_spec.rfind(':')
+    chords_str = state_spec[:last_colon].strip()
+    spin_spec = state_spec[last_colon+1:].strip()
+
+    # Parse chord(s) - can be single chord or chord+chord+chord
+    chord_parts = [c.strip() for c in chords_str.split('+')]
+
+    chords = []
+    for chord_str in chord_parts:
+        # Parse chord
+        is_major = not chord_str.endswith('m')
+        root_str = chord_str[:-1] if chord_str.endswith('m') else chord_str
+
+        try:
+            root_idx = Chord.NOTE_NAMES.index(root_str)
+        except ValueError:
+            raise ValueError(f"Invalid chord root: {root_str}")
+
+        chords.append(Chord(root_idx, is_major, 0))
+
+    # Parse spin specification
+    if '+' in spin_spec:
+        # Superposition of spins
+        spin_terms = [s.strip() for s in spin_spec.split('+')]
+
+        for term in spin_terms:
+            # Parse coefficient*spin or just spin
+            if '*' in term:
+                coeff_str, spin_name = term.split('*', 1)
+                coeff_str = coeff_str.strip()
+                spin_name = spin_name.strip()
+
+                # Parse coefficient (can be complex with 'i')
+                if 'i' in coeff_str:
+                    # Complex coefficient
+                    if coeff_str == 'i':
+                        coeff = 1j
+                    elif coeff_str == '-i':
+                        coeff = -1j
+                    else:
+                        # Parse forms like "0.5i" or "2.3i"
+                        coeff_str = coeff_str.replace('i', 'j')  # Python uses j
+                        coeff = complex(coeff_str)
+                else:
+                    coeff = float(coeff_str)
+            else:
+                # No coefficient specified, default to 1
+                spin_name = term
+                coeff = 1.0
+
+            if spin_name not in spin_names:
+                raise ValueError(f"Invalid spin name: {spin_name}. Use 'up', 'right', or 'down'")
+
+            spin = spin_names[spin_name]
+
+            # Add this spin state for all chords
+            for chord in chords:
+                components.append((chord, spin, coeff))
+    else:
+        # Single spin state
+        if spin_spec not in spin_names:
+            raise ValueError(f"Invalid spin name: {spin_spec}. Use 'up', 'right', or 'down'")
+
+        spin = spin_names[spin_spec]
+
+        # Add this spin state for all chords
+        for chord in chords:
+            components.append((chord, spin, 1.0))
+
+    return components
+
+
 class QutritWalker:
     """Qutrit quantum walk on the triadic tonnetz"""
 
@@ -190,6 +289,31 @@ class QutritWalker:
         self.state.fill(0)
         index = self._get_index(chord, spin)
         self.state[index] = 1.0
+
+    def set_superposition_state(self, state_components: List[Tuple[Chord, int, complex]]):
+        """
+        Set arbitrary superposition state with complex amplitudes
+
+        Args:
+            state_components: List of (chord, spin, amplitude) tuples
+                             where amplitude can be complex
+
+        Example:
+            # Create (|C,↑⟩ + |C,↓⟩)/√2
+            walker.set_superposition_state([
+                (Chord(0, True, 0), 0, 1/np.sqrt(2)),
+                (Chord(0, True, 0), 2, 1/np.sqrt(2))
+            ])
+        """
+        self.state.fill(0)
+        for chord, spin, amplitude in state_components:
+            idx = self._get_index(chord, spin)
+            self.state[idx] = amplitude
+
+        # Normalize
+        norm = np.linalg.norm(self.state)
+        if norm > 0:
+            self.state /= norm
 
     def step(self):
         """
@@ -294,21 +418,43 @@ class QutritWalker:
                 probs[key] += abs(self.state[i]) ** 2
         return probs
 
+    def get_full_state(self) -> dict:
+        """
+        Get full quantum state as dictionary of complex amplitudes
+
+        Returns:
+            Dictionary mapping (chord_root, is_major, spin) -> complex amplitude
+        """
+        state_dict = {}
+        for i in range(self.state_size):
+            chord, spin = self._get_state_params(i)
+            key = (chord.root, chord.is_major, spin)
+            state_dict[key] = self.state[i]
+        return state_dict
+
 
 class QutritWalkSimulator:
     """Core qutrit walk logic without any I/O (no MIDI, no printing)"""
 
-    def __init__(self, initial_chord: Chord, initial_spin: int = 0):
+    def __init__(self, initial_chord: Chord, initial_spin: int = 0,
+                 initial_superposition: Optional[List[Tuple[Chord, int, complex]]] = None):
         """
         Initialize the simulator
 
         Args:
-            initial_chord: Starting chord
+            initial_chord: Starting chord (used if initial_superposition is None)
             initial_spin: Initial spin state (0=|↑⟩, 1=|→⟩, 2=|↓⟩)
+            initial_superposition: Optional list of (chord, spin, amplitude) tuples
+                                   for custom superposition states
         """
         self.walker = QutritWalker()
         self.current_chord = initial_chord
-        self.walker.set_initial_state(initial_chord, initial_spin)
+
+        if initial_superposition is not None:
+            self.walker.set_superposition_state(initial_superposition)
+        else:
+            self.walker.set_initial_state(initial_chord, initial_spin)
+
         self.is_first_step = True
 
     def step_and_sample(self) -> dict:
@@ -321,6 +467,7 @@ class QutritWalkSimulator:
                 - 'neighbors': List of 3 neighbor chords [L, P, R]
                 - 'next': Next chord (sampled from neighbors)
                 - 'all_probs': Dict of all 24 chord probabilities {(root, is_major): prob}
+                - 'full_state': Dict of all 72 complex amplitudes {(root, is_major, spin): amplitude}
                 - 'is_first': Boolean indicating if this is the first step
         """
         result = {
@@ -334,6 +481,7 @@ class QutritWalkSimulator:
             result['neighbors'] = []
             result['next'] = self.current_chord
             result['all_probs'] = self.walker.get_chord_probabilities()
+            result['full_state'] = self.walker.get_full_state()
             return result
 
         # Evolve the quantum state
@@ -349,12 +497,16 @@ class QutritWalkSimulator:
         # Get full probability distribution
         all_probs = self.walker.get_chord_probabilities()
 
+        # Get full quantum state
+        full_state = self.walker.get_full_state()
+
         # Sample next chord from neighbors
         next_chord = self.walker.measure_constrained(neighbors)
 
         result['neighbors'] = neighbors
         result['next'] = next_chord
         result['all_probs'] = all_probs
+        result['full_state'] = full_state
 
         # Update current chord for next iteration
         self.current_chord = next_chord
@@ -371,6 +523,7 @@ class QutritWalkMusic(MIDIGenerator):
         self.chord_velocity = 70
         self.initial_chord = Chord(0, True, 0)  # C major
         self.initial_spin = 0  # |↑⟩
+        self.initial_superposition: Optional[List[Tuple[Chord, int, complex]]] = None
         self.simulator: QutritWalkSimulator = None  # type: ignore - Will be initialized in setup()
 
     def setup_args(self, parser=None):
@@ -384,15 +537,25 @@ class QutritWalkMusic(MIDIGenerator):
                           help='Starting chord root note (default: C)')
         parser.add_argument('--minor', action='store_true',
                           help='Start with minor chord (default: major)')
+        parser.add_argument('--initial-state', type=str,
+                          help='Initial quantum state specification (e.g., "C:up+down" for symmetric superposition)')
         return parser
 
     def setup(self):
         """Initialize qutrit walk state"""
-        self.simulator = QutritWalkSimulator(self.initial_chord, self.initial_spin)
+        self.simulator = QutritWalkSimulator(
+            self.initial_chord,
+            self.initial_spin,
+            self.initial_superposition
+        )
 
         print(f"Starting qutrit quantum walk on triadic tonnetz")
         print(f"Chord duration: {self.chord_duration}s")
-        print(f"Initial chord: {self.initial_chord}")
+        if self.initial_superposition:
+            print(f"Initial state: Custom superposition")
+        else:
+            spin_names = ['↑', '→', '↓']
+            print(f"Initial state: |{self.initial_chord}, {spin_names[self.initial_spin]}⟩")
         print()
 
     def generate_step(self):
@@ -461,18 +624,29 @@ if __name__ == "__main__":
         random.seed(args.seed)
         print(f"Using random seed: {args.seed}\n")
 
-    # Parse root note
-    try:
-        root_idx = Chord.NOTE_NAMES.index(args.root)
-    except ValueError:
-        print(f"Error: Invalid root note '{args.root}'. Valid notes: {', '.join(Chord.NOTE_NAMES)}")
-        exit(1)
+    # Handle initial state specification
+    if args.initial_state:
+        # Parse custom initial state
+        try:
+            qw.initial_superposition = parse_initial_state(args.initial_state)
+            # Extract first chord as current chord for display
+            qw.initial_chord = qw.initial_superposition[0][0]
+        except ValueError as e:
+            print(f"Error parsing initial state: {e}")
+            exit(1)
+    else:
+        # Use simple initial state from --root and --minor
+        try:
+            root_idx = Chord.NOTE_NAMES.index(args.root)
+        except ValueError:
+            print(f"Error: Invalid root note '{args.root}'. Valid notes: {', '.join(Chord.NOTE_NAMES)}")
+            exit(1)
+        qw.initial_chord = Chord(root_idx, not args.minor, 0)
 
     # Set parameters from args
     qw.base_octave = args.base_octave
     qw.chord_duration = args.duration
     qw.chord_velocity = args.velocity
-    qw.initial_chord = Chord(root_idx, not args.minor, 0)
 
     # Select and open MIDI port
     port_name = qw.select_midi_port(args.midi_port)
