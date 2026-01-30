@@ -233,7 +233,16 @@ def parse_initial_state(state_spec: str) -> List[Tuple[Chord, int, complex]]:
 class QutritWalker:
     """Qutrit quantum walk on the triadic tonnetz"""
 
-    def __init__(self):
+    def __init__(self, transform_order: str = "LPR"):
+        """
+        Initialize qutrit walker
+
+        Args:
+            transform_order: Order of transformations mapped to spin states.
+                           Must be a permutation of "LPR" (default: "LPR")
+                           Example: "LPR" means ↑→L, →→P, ↓→R
+                                   "RLP" means ↑→R, →→L, ↓→P
+        """
         # State space: 24 chords × 3 qutrit states = 72 dimensions
         self.num_chords = 24
         self.num_spins = 3  # |↑⟩, |→⟩, |↓⟩
@@ -248,6 +257,18 @@ class QutritWalker:
             [2, -1, 2],
             [2, 2, -1]
         ], dtype=complex)
+
+        # Validate and store transformation order
+        self.transform_order = transform_order.upper()
+        if sorted(self.transform_order) != ['L', 'P', 'R']:
+            raise ValueError(f"Invalid transform_order: {transform_order}. Must be a permutation of 'LPR'")
+
+        # Map spin states to transformations
+        self.transform_map = {
+            0: self.transform_order[0],  # |↑⟩
+            1: self.transform_order[1],  # |→⟩
+            2: self.transform_order[2]   # |↓⟩
+        }
 
         # Chord index mapping: (root, is_major) → index (0-23)
         self.chord_to_index = {}
@@ -319,9 +340,16 @@ class QutritWalker:
         """
         Perform one quantum walk step:
         1. Apply Grover coin to spin state
-        2. Shift according to P/L/R transformations
+        2. Shift according to configured transformation order
         """
         new_state = np.zeros_like(self.state)
+
+        # Map transformation letters to functions
+        transform_funcs = {
+            'L': apply_L,
+            'P': apply_P,
+            'R': apply_R
+        }
 
         # For each chord, apply coin operation then shift
         for chord_idx in range(self.num_chords):
@@ -341,28 +369,18 @@ class QutritWalker:
             # Apply Grover coin
             new_spin_state = self.grover_coin @ spin_state
 
-            # Shift according to spin state:
-            # |↑⟩ → L transformation (Leittonwechsel)
-            # |→⟩ → P transformation (Parallel)
-            # |↓⟩ → R transformation (Relative)
+            # Shift according to configured transformation order
+            # For each spin state, apply its mapped transformation
+            for spin_idx in range(3):
+                if abs(new_spin_state[spin_idx]) > 1e-12:
+                    # Get the transformation for this spin
+                    transform_letter = self.transform_map[spin_idx]
+                    transform_func = transform_funcs[transform_letter]
 
-            # |↑⟩ component goes to L(chord)
-            if abs(new_spin_state[0]) > 1e-12:
-                new_chord = apply_L(chord)
-                new_idx = self._get_index(new_chord, 0)
-                new_state[new_idx] += new_spin_state[0]
-
-            # |→⟩ component goes to P(chord)
-            if abs(new_spin_state[1]) > 1e-12:
-                new_chord = apply_P(chord)
-                new_idx = self._get_index(new_chord, 1)
-                new_state[new_idx] += new_spin_state[1]
-
-            # |↓⟩ component goes to R(chord)
-            if abs(new_spin_state[2]) > 1e-12:
-                new_chord = apply_R(chord)
-                new_idx = self._get_index(new_chord, 2)
-                new_state[new_idx] += new_spin_state[2]
+                    # Apply transformation and update state
+                    new_chord = transform_func(chord)
+                    new_idx = self._get_index(new_chord, spin_idx)
+                    new_state[new_idx] += new_spin_state[spin_idx]
 
         self.state = new_state
 
@@ -437,7 +455,8 @@ class QutritWalkSimulator:
     """Core qutrit walk logic without any I/O (no MIDI, no printing)"""
 
     def __init__(self, initial_chord: Chord, initial_spin: int = 0,
-                 initial_superposition: Optional[List[Tuple[Chord, int, complex]]] = None):
+                 initial_superposition: Optional[List[Tuple[Chord, int, complex]]] = None,
+                 transform_order: str = "LPR"):
         """
         Initialize the simulator
 
@@ -446,8 +465,9 @@ class QutritWalkSimulator:
             initial_spin: Initial spin state (0=|↑⟩, 1=|→⟩, 2=|↓⟩)
             initial_superposition: Optional list of (chord, spin, amplitude) tuples
                                    for custom superposition states
+            transform_order: Order of transformations (default: "LPR")
         """
-        self.walker = QutritWalker()
+        self.walker = QutritWalker(transform_order=transform_order)
         self.current_chord = initial_chord
 
         if initial_superposition is not None:
@@ -524,6 +544,7 @@ class QutritWalkMusic(MIDIGenerator):
         self.initial_chord = Chord(0, True, 0)  # C major
         self.initial_spin = 0  # |↑⟩
         self.initial_superposition: Optional[List[Tuple[Chord, int, complex]]] = None
+        self.transform_order = "LPR"  # Default transformation order
         self.simulator: QutritWalkSimulator = None  # type: ignore - Will be initialized in setup()
 
     def setup_args(self, parser=None):
@@ -539,6 +560,9 @@ class QutritWalkMusic(MIDIGenerator):
                           help='Start with minor chord (default: major)')
         parser.add_argument('--initial-state', type=str,
                           help='Initial quantum state specification (e.g., "C:up+down" for symmetric superposition)')
+        parser.add_argument('--transform-order', type=str, default='LPR',
+                          help='Transformation order for spin states: permutation of LPR (default: LPR). '
+                               'Example: "RLP" means ↑→R, →→L, ↓→P')
         return parser
 
     def setup(self):
@@ -546,11 +570,13 @@ class QutritWalkMusic(MIDIGenerator):
         self.simulator = QutritWalkSimulator(
             self.initial_chord,
             self.initial_spin,
-            self.initial_superposition
+            self.initial_superposition,
+            self.transform_order
         )
 
         print(f"Starting qutrit quantum walk on triadic tonnetz")
         print(f"Chord duration: {self.chord_duration}s")
+        print(f"Transform order: {self.transform_order} (↑→{self.transform_order[0]}, →→{self.transform_order[1]}, ↓→{self.transform_order[2]})")
         if self.initial_superposition:
             print(f"Initial state: Custom superposition")
         else:
@@ -643,10 +669,18 @@ if __name__ == "__main__":
             exit(1)
         qw.initial_chord = Chord(root_idx, not args.minor, 0)
 
+    # Validate transform order
+    transform_order = args.transform_order.upper()
+    if sorted(transform_order) != ['L', 'P', 'R']:
+        print(f"Error: Invalid transform order '{args.transform_order}'. Must be a permutation of LPR.")
+        print(f"Valid options: LPR, LRP, PLR, PRL, RLP, RPL")
+        exit(1)
+
     # Set parameters from args
     qw.base_octave = args.base_octave
     qw.chord_duration = args.duration
     qw.chord_velocity = args.velocity
+    qw.transform_order = transform_order
 
     # Select and open MIDI port
     port_name = qw.select_midi_port(args.midi_port)

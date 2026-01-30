@@ -32,6 +32,7 @@ for chord_name in ALL_CHORD_NAMES:
 
 def run_experiment(num_steps: int, initial_chord: Chord, initial_spin: int = 0,
                    initial_superposition: Optional[List[Tuple[Chord, int, complex]]] = None,
+                   transform_order: str = "LPR",
                    seed: int = None) -> list:
     """
     Run a single qutrit walk experiment
@@ -41,6 +42,7 @@ def run_experiment(num_steps: int, initial_chord: Chord, initial_spin: int = 0,
         initial_chord: Starting chord (used if initial_superposition is None)
         initial_spin: Initial spin state (0=|↑⟩, 1=|→⟩, 2=|↓⟩)
         initial_superposition: Optional custom initial state
+        transform_order: Transformation order (default: "LPR")
         seed: Random seed for reproducibility
 
     Returns:
@@ -56,7 +58,7 @@ def run_experiment(num_steps: int, initial_chord: Chord, initial_spin: int = 0,
         np.random.seed(seed)
         random.seed(seed)
 
-    simulator = QutritWalkSimulator(initial_chord, initial_spin, initial_superposition)
+    simulator = QutritWalkSimulator(initial_chord, initial_spin, initial_superposition, transform_order)
     results = []
 
     for step in range(num_steps):
@@ -153,6 +155,8 @@ def main():
                         help='Number of independent runs to perform (default: 1)')
     parser.add_argument('--initial-state', type=str,
                         help='Initial quantum state specification (e.g., "C:up+down" for symmetric superposition)')
+    parser.add_argument('--transform-order', type=str, default='LPR',
+                        help='Transformation order for spin states: permutation of LPR (default: LPR)')
 
     args = parser.parse_args()
 
@@ -174,11 +178,19 @@ def main():
             return
         initial_chord = Chord(root_idx, not args.minor, 0)
 
+    # Validate transform order
+    transform_order = args.transform_order.upper()
+    if sorted(transform_order) != ['L', 'P', 'R']:
+        print(f"Error: Invalid transform order '{args.transform_order}'. Must be a permutation of LPR.")
+        print(f"Valid options: LPR, LRP, PLR, PRL, RLP, RPL")
+        return
+
     print(f"Running qutrit walk experiments")
     if initial_superposition:
         print(f"Initial state: Custom superposition")
     else:
         print(f"Initial chord: {initial_chord}")
+    print(f"Transform order: {transform_order}")
     print(f"Steps per run: {args.steps}")
     print(f"Number of runs: {args.num_runs}")
     if args.seed is not None:
@@ -189,7 +201,8 @@ def main():
     if args.num_runs == 1:
         # Single run - simple filename
         results = run_experiment(args.steps, initial_chord,
-                                initial_superposition=initial_superposition, seed=args.seed)
+                                initial_superposition=initial_superposition,
+                                transform_order=transform_order, seed=args.seed)
         save_to_csv(results, args.output)
     else:
         # Multiple runs - add run number to filename
@@ -199,7 +212,8 @@ def main():
         for run in range(args.num_runs):
             run_seed = args.seed + run if args.seed is not None else None
             results = run_experiment(args.steps, initial_chord,
-                                   initial_superposition=initial_superposition, seed=run_seed)
+                                   initial_superposition=initial_superposition,
+                                   transform_order=transform_order, seed=run_seed)
 
             filename = f"{base_filename}_run{run+1}.{ext}"
             save_to_csv(results, filename)
