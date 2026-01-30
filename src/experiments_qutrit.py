@@ -33,7 +33,7 @@ for chord_name in ALL_CHORD_NAMES:
 def run_experiment(num_steps: int, initial_chord: Chord, initial_spin: int = 0,
                    initial_superposition: Optional[List[Tuple[Chord, int, complex]]] = None,
                    transform_order: str = "LPR",
-                   seed: int = None) -> list:
+                   seed: Optional[int] = None) -> list:
     """
     Run a single qutrit walk experiment
 
@@ -137,6 +137,109 @@ def save_to_csv(results: list, filename: str):
     print(f"Saved {len(results)} steps to {filename}")
 
 
+def run_parameter_sweep(num_steps: int, num_runs: int, output_dir: str, seed: Optional[int] = None):
+    """
+    Run systematic parameter sweep experiments
+
+    Runs two experiment sets:
+    1. Fix initial state (C:up), vary transformation order (all 6 permutations)
+    2. Fix transformation order (LPR), vary initial state (4 configurations)
+
+    Args:
+        num_steps: Number of steps per walk
+        num_runs: Number of independent runs per configuration
+        output_dir: Directory to save results
+        seed: Base random seed (each run gets seed+offset)
+    """
+    import os
+
+    # Create output directory if needed
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Initial chord is always C major
+    initial_chord = Chord(0, True, 0)
+
+    print("="*70)
+    print("PARAMETER SWEEP EXPERIMENTS")
+    print("="*70)
+    print(f"Steps per walk: {num_steps}")
+    print(f"Runs per configuration: {num_runs}")
+    print(f"Output directory: {output_dir}")
+    if seed is not None:
+        print(f"Base seed: {seed}")
+    print()
+
+    # Experiment 1: Fix initial state, vary transformation order
+    print("Experiment 1: Varying transformation order (fixed initial state C:up)")
+    print("-"*70)
+
+    transform_orders = ['LPR', 'LRP', 'PLR', 'PRL', 'RLP', 'RPL']
+
+    for order in transform_orders:
+        print(f"  Transform order: {order}")
+
+        for run in range(num_runs):
+            run_seed = seed + run if seed is not None else None
+
+            results = run_experiment(
+                num_steps,
+                initial_chord,
+                initial_spin=0,  # up
+                initial_superposition=None,
+                transform_order=order,
+                seed=run_seed
+            )
+
+            filename = os.path.join(output_dir, f"exp1_order_{order}_run{run+1:02d}.csv")
+            save_to_csv(results, filename)
+
+        print(f"    ✓ Completed {num_runs} runs")
+
+    print()
+    print(f"Experiment 1 complete: {len(transform_orders)} orders × {num_runs} runs = {len(transform_orders) * num_runs} walks")
+    print()
+
+    # Experiment 2: Fix transformation order, vary initial state
+    print("Experiment 2: Varying initial state (fixed transform order LPR)")
+    print("-"*70)
+
+    # Define the 4 initial states
+    initial_states = [
+        ("up", None, 0),  # Pure up state
+        ("down", None, 2),  # Pure down state
+        ("right", None, 1),  # Pure right state
+        ("equal_superposition", parse_initial_state("C:up+right+down"), 0)  # Equal superposition
+    ]
+
+    for state_name, superposition, spin in initial_states:
+        print(f"  Initial state: {state_name}")
+
+        for run in range(num_runs):
+            # Offset seed to avoid overlap with experiment 1
+            run_seed = (seed + 1000 + run) if seed is not None else None
+
+            results = run_experiment(
+                num_steps,
+                initial_chord,
+                initial_spin=spin,
+                initial_superposition=superposition,
+                transform_order="LPR",
+                seed=run_seed
+            )
+
+            filename = os.path.join(output_dir, f"exp2_state_{state_name}_run{run+1:02d}.csv")
+            save_to_csv(results, filename)
+
+        print(f"    ✓ Completed {num_runs} runs")
+
+    print()
+    print(f"Experiment 2 complete: {len(initial_states)} states × {num_runs} runs = {len(initial_states) * num_runs} walks")
+    print()
+    print("="*70)
+    print(f"TOTAL: {(len(transform_orders) + len(initial_states)) * num_runs} walks saved to {output_dir}")
+    print("="*70)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Run qutrit quantum walk experiments and save to CSV"
@@ -157,8 +260,22 @@ def main():
                         help='Initial quantum state specification (e.g., "C:up+down" for symmetric superposition)')
     parser.add_argument('--transform-order', type=str, default='LPR',
                         help='Transformation order for spin states: permutation of LPR (default: LPR)')
+    parser.add_argument('--parameter-sweep', action='store_true',
+                        help='Run systematic parameter sweep experiments (overrides other settings)')
+    parser.add_argument('--sweep-output-dir', type=str, default='parameter_sweep',
+                        help='Output directory for parameter sweep results (default: parameter_sweep)')
 
     args = parser.parse_args()
+
+    # Handle parameter sweep mode
+    if args.parameter_sweep:
+        run_parameter_sweep(
+            num_steps=args.steps,
+            num_runs=args.num_runs,
+            output_dir=args.sweep_output_dir,
+            seed=args.seed
+        )
+        return
 
     # Handle initial state specification
     initial_superposition = None
