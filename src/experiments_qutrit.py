@@ -64,21 +64,20 @@ def run_experiment(num_steps: int, initial_chord: Chord, initial_spin: int = 0,
     for step in range(num_steps):
         result = simulator.step_and_sample()
 
+        # Skip the initial state (step 0 before any evolution)
+        if result['is_first']:
+            continue
+
         # Build row for CSV
         row = {
-            'step': step,
+            'step': step - 1,  # Adjust step number since we skipped step 0
             'current_chord': str(result['current'])
         }
 
-        # Add neighbor names (empty for first step)
-        if result['is_first']:
-            row['neighbor_L'] = ''
-            row['neighbor_P'] = ''
-            row['neighbor_R'] = ''
-        else:
-            row['neighbor_L'] = str(result['neighbors'][0])
-            row['neighbor_P'] = str(result['neighbors'][1])
-            row['neighbor_R'] = str(result['neighbors'][2])
+        # Add neighbor names
+        row['neighbor_L'] = str(result['neighbors'][0])
+        row['neighbor_P'] = str(result['neighbors'][1])
+        row['neighbor_R'] = str(result['neighbors'][2])
 
         # Add all 24 chord probabilities (marginal over spins)
         all_probs = result['all_probs']
@@ -173,7 +172,7 @@ def run_parameter_sweep(num_steps: int, num_runs: int, output_dir: str, seed: Op
     print("Experiment 1: Varying transformation order (fixed initial state C:up)")
     print("-"*70)
 
-    transform_orders = ['LPR', 'LRP', 'PLR', 'PRL', 'RLP', 'RPL']
+    transform_orders = ['LPR', 'PRL', 'RLP']
 
     for order in transform_orders:
         print(f"  Transform order: {order}")
