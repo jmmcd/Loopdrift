@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 import argparse
+from midi_generator import save_walk_to_midi, calculate_distinct_chords_ratio
 
 
 # Chord names (matching experiments_qutrit.py)
@@ -94,29 +95,34 @@ def classical_walk(initial_chord='C', num_steps=200, seed=None):
     return walk
 
 
-def save_walk_to_csv(walk, output_path):
+def save_walk_to_csv(walk, output_path, minimal=False):
     """
-    Save walk to CSV file in the same format as quantum walks.
+    Save walk to CSV file.
 
     Args:
         walk: List of chord names
         output_path: Path to save CSV file
+        minimal: If True, only save step and current_chord (saves space for large batches)
     """
     data = []
 
     for step, chord in enumerate(walk):
-        # Get neighbors for this chord
-        L, P, R = get_neo_riemannian_neighbors(chord)
-
-        # Create row with step, current chord, and neighbors
-        # For classical walk, we don't have probabilities or quantum state
-        row = {
-            'step': step,
-            'current_chord': chord,
-            'neighbor_L': L,
-            'neighbor_P': P,
-            'neighbor_R': R,
-        }
+        if minimal:
+            # Minimal format: just step and chord
+            row = {
+                'step': step,
+                'current_chord': chord,
+            }
+        else:
+            # Full format: step, chord, and neighbors
+            L, P, R = get_neo_riemannian_neighbors(chord)
+            row = {
+                'step': step,
+                'current_chord': chord,
+                'neighbor_L': L,
+                'neighbor_P': P,
+                'neighbor_R': R,
+            }
 
         data.append(row)
 
@@ -140,6 +146,8 @@ def main():
                        help='Random seed for reproducibility')
     parser.add_argument('--num-walks', type=int, default=1,
                        help='Number of walks to generate (default: 1)')
+    parser.add_argument('--minimal-csv', action='store_true',
+                       help='Save only step and chord columns (smaller files for large batches)')
 
     args = parser.parse_args()
 
@@ -167,7 +175,11 @@ def main():
         )
 
         # Save to CSV
-        save_walk_to_csv(walk, args.output)
+        save_walk_to_csv(walk, args.output, minimal=args.minimal_csv)
+
+        # Save to MIDI
+        midi_path = Path(args.output).with_suffix('.mid')
+        save_walk_to_midi(walk, midi_path)
     else:
         # Multiple walks
         print(f"Generating {num_walks} classical random walks from {args.initial}")
@@ -195,14 +207,16 @@ def main():
                 seed=walk_seed
             )
 
-            # Generate output filename
+            # Generate output filenames
             output_file = parent / f"{stem}_{i+1}{suffix}"
+            midi_file = parent / f"{stem}_{i+1}.mid"
 
-            # Save to CSV
+            # Save to CSV and MIDI
             print(f"\nWalk {i+1}/{num_walks}:")
             if walk_seed is not None:
                 print(f"  Seed: {walk_seed}")
-            save_walk_to_csv(walk, output_file)
+            save_walk_to_csv(walk, output_file, minimal=args.minimal_csv)
+            save_walk_to_midi(walk, midi_file)
 
         print(f"\nCompleted {num_walks} walks")
 

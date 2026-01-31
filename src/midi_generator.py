@@ -1,6 +1,7 @@
 """
 Base class for generative MIDI systems
 Provides common infrastructure for port selection, note sending, and event loop
+Also provides utilities for saving chord sequences to MIDI files
 """
 
 from abc import ABC, abstractmethod
@@ -9,6 +10,7 @@ import sys
 import threading
 import argparse
 import mido
+from mido import MidiFile, MidiTrack, Message
 
 
 SCALES = {
@@ -249,3 +251,143 @@ class MIDIGenerator(ABC):
 
         except KeyboardInterrupt:
             self.cleanup()
+
+
+# Utility functions for saving chord sequences to MIDI files
+
+NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+
+# Enharmonic equivalents mapping
+ENHARMONIC_MAP = {
+    'Db': 'C#',
+    'Eb': 'D#',
+    'Gb': 'F#',
+    'Ab': 'G#',
+    'Bb': 'A#',
+}
+
+
+def chord_to_midi_notes(chord_name, base_octave=4):
+    """
+    Convert a chord name to MIDI note numbers.
+
+    Args:
+        chord_name: Chord name (e.g., 'C', 'Am', 'F#m', 'Bbm')
+        base_octave: Base octave for the chord (default: 4)
+
+    Returns:
+        List of 3 MIDI note numbers
+    """
+    # Parse chord
+    if chord_name.endswith('m'):
+        root_name = chord_name[:-1]
+        is_major = False
+    else:
+        root_name = chord_name
+        is_major = True
+
+    # Handle enharmonic equivalents (e.g., Bb -> A#)
+    if root_name in ENHARMONIC_MAP:
+        root_name = ENHARMONIC_MAP[root_name]
+
+    root_idx = NOTE_NAMES.index(root_name)
+    base = 12 * (base_octave + 1)  # MIDI note for C in the base octave
+
+    if is_major:
+        # Major triad: root, major third, perfect fifth
+        intervals = [0, 4, 7]
+    else:
+        # Minor triad: root, minor third, perfect fifth
+        intervals = [0, 3, 7]
+
+    # Create notes in close voicing (all within same octave)
+    notes = []
+    for interval in intervals:
+        pitch_class = (root_idx + interval) % 12
+        midi_note = base + pitch_class
+        notes.append(midi_note)
+
+    return notes
+
+
+def save_walk_to_midi(walk, output_path, tempo=120, ticks_per_step=480):
+    """
+    Save a chord sequence walk to MIDI file.
+
+    This can be used to save classical random walks, quantum walks,
+    or any other chord sequence to a playable MIDI file.
+
+    Handles both sharp and flat notation (e.g., 'A#' and 'Bb' are treated as equivalent).
+
+    Args:
+        walk: List of chord names (e.g., ['C', 'Am', 'F', 'G', 'Bb', 'Ebm'])
+        output_path: Path to save MIDI file
+        tempo: Tempo in BPM (default: 120)
+        ticks_per_step: MIDI ticks per step (default: 480, which is one quarter note)
+    """
+    mid = MidiFile()
+    track = MidiTrack()
+    mid.tracks.append(track)
+
+    # Set tempo
+    track.append(mido.MetaMessage('set_tempo', tempo=mido.bpm2tempo(tempo)))
+
+    # Add chords to track
+    for chord_name in walk:
+        notes = chord_to_midi_notes(chord_name)
+
+        # Note on for all three notes
+        for note in notes:
+            track.append(Message('note_on', note=note, velocity=64, time=0))
+
+        # Note off after duration (all notes off at once)
+        for i, note in enumerate(notes):
+            # Only the first note-off carries the time delta
+            time_delta = ticks_per_step if i == 0 else 0
+            track.append(Message('note_off', note=note, velocity=0, time=time_delta))
+
+    mid.save(output_path)
+    print(f"Saved MIDI to {output_path}")
+
+
+def calculate_distinct_chords_ratio(chord_sequence: list, window_size: int) -> list:
+    """
+    Calculate the ratio of distinct chords visited within a sliding window.
+
+    For each step, calculates: (number of distinct chords in window) / (window size)
+
+    During early steps (when fewer than window_size steps have occurred),
+    the window includes all steps from the beginning up to the current step.
+
+    Args:
+        chord_sequence: List of chord names in order
+        window_size: Size of the sliding window (e.g., 20)
+
+    Returns:
+        List of ratios, one per step (same length as chord_sequence)
+
+    Example:
+        chord_sequence = ['C', 'Am', 'C', 'F']
+        window_size = 3
+        Returns: [1.0, 1.0, 0.667, 1.0]
+        - Step 0: {C} -> 1/1 = 1.0
+        - Step 1: {C, Am} -> 2/2 = 1.0
+        - Step 2: {C, Am, C} = {C, Am} -> 2/3 = 0.667
+        - Step 3: {Am, C, F} -> 3/3 = 1.0 (window slides, C from step 0 excluded)
+    """
+    ratios = []
+
+    for i in range(len(chord_sequence)):
+        # Determine window boundaries
+        window_start = max(0, i - window_size + 1)
+        window_end = i + 1
+
+        # Extract window and count distinct chords
+        window = chord_sequence[window_start:window_end]
+        distinct_chords = len(set(window))
+
+        # Calculate ratio
+        ratio = distinct_chords / len(window)
+        ratios.append(ratio)
+
+    return ratios

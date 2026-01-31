@@ -9,7 +9,9 @@ import argparse
 import csv
 import random
 import numpy as np
+from pathlib import Path
 from QutritWalk import QutritWalkSimulator, Chord, parse_initial_state
+from midi_generator import save_walk_to_midi, calculate_distinct_chords_ratio
 from typing import Optional, List, Tuple
 
 
@@ -121,22 +123,44 @@ def run_experiment(num_steps: int, initial_chord: Chord, initial_spin: int = 0,
     return results
 
 
-def save_to_csv(results: list, filename: str):
-    """Save experiment results to CSV file"""
+def save_to_csv(results: list, filename: str, save_midi: bool = True, minimal: bool = False):
+    """
+    Save experiment results to CSV file and optionally MIDI file
+
+    Args:
+        results: List of result dictionaries from the walk
+        filename: CSV filename to save to
+        save_midi: If True, also save a MIDI file with the chord sequence
+        minimal: If True, only save step and current_chord (saves space for large batches)
+    """
     if not results:
         return
 
-    fieldnames = ['step', 'current_chord', 'neighbor_L', 'neighbor_P', 'neighbor_R'] + ALL_CHORD_NAMES + ALL_STATE_NAMES
+    if minimal:
+        # Minimal format: only essential columns
+        fieldnames = ['step', 'current_chord']
+    else:
+        # Full format: all columns
+        fieldnames = ['step', 'current_chord', 'neighbor_L', 'neighbor_P', 'neighbor_R'] + ALL_CHORD_NAMES + ALL_STATE_NAMES
 
     with open(filename, 'w', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
         writer.writeheader()
         writer.writerows(results)
 
     print(f"Saved {len(results)} steps to {filename}")
 
+    # Save MIDI file with the chord sequence
+    if save_midi:
+        # Extract chord names from results
+        chord_sequence = [row['current_chord'] for row in results]
 
-def run_parameter_sweep(num_steps: int, num_runs: int, output_dir: str, seed: Optional[int] = None):
+        # Generate MIDI filename from CSV filename
+        midi_filename = Path(filename).with_suffix('.mid')
+        save_walk_to_midi(chord_sequence, midi_filename)
+
+
+def run_parameter_sweep(num_steps: int, num_runs: int, output_dir: str, seed: Optional[int] = None, save_midi: bool = True, minimal: bool = False):
     """
     Run systematic parameter sweep experiments
 
@@ -190,7 +214,7 @@ def run_parameter_sweep(num_steps: int, num_runs: int, output_dir: str, seed: Op
             )
 
             filename = os.path.join(output_dir, f"exp1_order_{order}_run{run+1:02d}.csv")
-            save_to_csv(results, filename)
+            save_to_csv(results, filename, save_midi=save_midi, minimal=minimal)
 
         print(f"    ✓ Completed {num_runs} runs")
 
@@ -227,7 +251,7 @@ def run_parameter_sweep(num_steps: int, num_runs: int, output_dir: str, seed: Op
             )
 
             filename = os.path.join(output_dir, f"exp2_state_{state_name}_run{run+1:02d}.csv")
-            save_to_csv(results, filename)
+            save_to_csv(results, filename, save_midi=save_midi, minimal=minimal)
 
         print(f"    ✓ Completed {num_runs} runs")
 
@@ -263,6 +287,10 @@ def main():
                         help='Run systematic parameter sweep experiments (overrides other settings)')
     parser.add_argument('--sweep-output-dir', type=str, default='parameter_sweep',
                         help='Output directory for parameter sweep results (default: parameter_sweep)')
+    parser.add_argument('--no-midi', action='store_true',
+                        help='Skip generating MIDI files (only save CSV)')
+    parser.add_argument('--minimal-csv', action='store_true',
+                        help='Save only step and chord columns (smaller files for large batches)')
 
     args = parser.parse_args()
 
@@ -272,7 +300,9 @@ def main():
             num_steps=args.steps,
             num_runs=args.num_runs,
             output_dir=args.sweep_output_dir,
-            seed=args.seed
+            seed=args.seed,
+            save_midi=not args.no_midi,
+            minimal=args.minimal_csv
         )
         return
 
@@ -314,12 +344,14 @@ def main():
     print()
 
     # Run experiments
+    save_midi = not args.no_midi
+
     if args.num_runs == 1:
         # Single run - simple filename
         results = run_experiment(args.steps, initial_chord,
                                 initial_superposition=initial_superposition,
                                 transform_order=transform_order, seed=args.seed)
-        save_to_csv(results, args.output)
+        save_to_csv(results, args.output, save_midi=save_midi, minimal=args.minimal_csv)
     else:
         # Multiple runs - add run number to filename
         base_filename = args.output.rsplit('.', 1)[0]
@@ -332,7 +364,7 @@ def main():
                                    transform_order=transform_order, seed=run_seed)
 
             filename = f"{base_filename}_run{run+1}.{ext}"
-            save_to_csv(results, filename)
+            save_to_csv(results, filename, save_midi=save_midi, minimal=args.minimal_csv)
 
     print("\nDone!")
 

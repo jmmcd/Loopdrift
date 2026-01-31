@@ -16,7 +16,7 @@ Generate a random walk starting from C major:
 python classical_walk.py
 ```
 
-This creates `classical_walk.csv` with 200 steps.
+This creates `classical_walk.csv` with 200 steps and `classical_walk.mid` MIDI file.
 
 ### Custom Parameters
 
@@ -36,6 +36,11 @@ python classical_walk.py --seed 42
 # Generate multiple walks at once
 python classical_walk.py --num-walks 10 --output walk.csv
 # This creates walk_1.csv, walk_2.csv, ..., walk_10.csv
+# And walk_1.mid, walk_2.mid, ..., walk_10.mid
+
+# For large batches, use minimal CSV to save space (2.3x smaller)
+python classical_walk.py --num-walks 1000 --steps 200 --minimal-csv --output walk.csv
+# Minimal CSV only saves step and current_chord columns
 ```
 
 ### Combined Options
@@ -72,7 +77,9 @@ python classical_walk.py --initial G --seed 42 --output walk_G.csv
 
 ## Output Format
 
-The CSV file contains:
+### CSV File
+
+**Full format** (default):
 - `step`: Step number (0 to num_steps)
 - `current_chord`: Current chord name
 - `neighbor_L`: L transformation neighbor (Leading-tone exchange)
@@ -87,6 +94,30 @@ step,current_chord,neighbor_L,neighbor_P,neighbor_R
 2,F,Am,Fm,Dm
 ...
 ```
+
+**Minimal format** (`--minimal-csv` flag):
+- `step`: Step number (0 to num_steps)
+- `current_chord`: Current chord name
+
+Example:
+```csv
+step,current_chord
+0,C
+1,Am
+2,F
+...
+```
+
+Use minimal format for large batch runs to save ~60% disk space.
+
+### MIDI File
+
+The MIDI file contains the chord sequence as triads:
+- Each chord plays for one quarter note (at 120 BPM by default)
+- All three notes of each chord are kept within the same octave (close voicing)
+- Major triads: root + major third + perfect fifth
+- Minor triads: root + minor third + perfect fifth
+- Default octave: 4 (middle C range)
 
 ## Visualization
 
@@ -138,12 +169,16 @@ Key differences:
 
 ```python
 from classical_walk import classical_walk, save_walk_to_csv
+from midi_generator import save_walk_to_midi
 
 # Generate a walk
 walk = classical_walk(initial_chord='C', num_steps=200, seed=42)
 
 # Save to CSV
 save_walk_to_csv(walk, 'my_walk.csv')
+
+# Save to MIDI (shared utility that also works with quantum walks)
+save_walk_to_midi(walk, 'my_walk.mid')
 ```
 
 ## Notes
