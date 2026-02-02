@@ -217,6 +217,77 @@ def plot_combined(classical_dir, qutrit_dir, window_size=10, num_walks=20, outpu
     plt.close()
 
 
+from sksequitur import parse
+
+def sequitur_stats_dir(dirname):
+    """
+    """
+    print(dirname)
+
+    # Collect walks data
+    # Try both patterns: files with .csv extension and without
+    pattern_csv = str(Path(dirname) / "*.csv")
+    pattern_noext = str(Path(dirname) / "*")
+
+    files = sorted(glob.glob(pattern_csv))
+    if len(files) == 0:
+        # Try without extension, but filter out MIDI files
+        files = sorted([f for f in glob.glob(pattern_noext)
+                       if not f.endswith('.mid') and Path(f).is_file()])
+
+    print(f"Analyzing {len(files)} walks")
+    if len(files) == 0:
+        print(f"  Warning: No files found in {dir}")
+
+    stats = []
+    for csv_file in files:
+        chord_sequence = load_walk_from_csv(csv_file)
+        stats.append(sequitur_stats(chord_sequence))
+    stats = np.array(stats)
+
+    print(f"shape {stats.shape}, mean {stats.mean(axis=0)}, std {stats.std(axis=0)}")
+        
+
+def sequitur_stats(notes):
+    # Parse with Sequitur (for PAI comparison)
+    grammar_sequitur = parse(notes)
+    pai = PAI(grammar_sequitur)
+    gram_len = grammar_len(grammar_sequitur)
+    return pai, gram_len
+
+def grammar_len(grammar):
+    return len(grammar)
+
+def PAI(grammar):
+    """
+    Calculate the total number of binary concatenations required to construct
+    the sequence from a Sequitur grammar.
+
+    For each grammar rule with n elements on the right-hand side, we need n-1
+    binary concatenations to construct it. This function sums (n-1) across all
+    rules to give a measure of the grammatical complexity.
+
+    Args:
+        grammar: A Sequitur grammar object
+
+    Returns:
+        int: The sum of (n-1) for all grammar rules, representing the total
+             number of binary concatenations needed
+    """
+    total_concatenations = 0
+
+    # Iterate through all rules in the grammar
+    for rule in grammar:
+        # Count the number of symbols on the right-hand side of this rule
+        rhs_length = len(grammar[rule])
+
+        # Add (n-1) concatenations for this rule
+        if rhs_length > 0:
+            total_concatenations += (rhs_length - 1)
+
+    return total_concatenations
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Plot distinct chords ratio for classical and quantum walks"
@@ -242,22 +313,25 @@ def main():
     print(f"Number of walks per type: {args.num_walks}")
     print()
 
-    if args.separate:
-        plot_walks(
-            args.classical_dir,
-            args.qutrit_dir,
-            window_size=args.window_size,
-            num_walks=args.num_walks,
-            output_path=args.output
-        )
-    else:
-        plot_combined(
-            args.classical_dir,
-            args.qutrit_dir,
-            window_size=args.window_size,
-            num_walks=args.num_walks,
-            output_path=args.output
-        )
+    sequitur_stats_dir(args.classical_dir)
+    sequitur_stats_dir(args.qutrit_dir)
+
+    # if args.separate:
+    #     plot_walks(
+    #         args.classical_dir,
+    #         args.qutrit_dir,
+    #         window_size=args.window_size,
+    #         num_walks=args.num_walks,
+    #         output_path=args.output
+    #     )
+    # else:
+    #     plot_combined(
+    #         args.classical_dir,
+    #         args.qutrit_dir,
+    #         window_size=args.window_size,
+    #         num_walks=args.num_walks,
+    #         output_path=args.output
+    #     )
 
 
 if __name__ == '__main__':
